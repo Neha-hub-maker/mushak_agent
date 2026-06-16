@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import sys
 import subprocess
 import pandas as pd
 import markdown
@@ -86,9 +87,9 @@ if sales_file and purchase_file:
                 env_context = os.environ.copy()
                 env_context["MUSHAK_DATA_DIR"] = USER_DIR
                 
-                # Execute automated scripts via absolute shell execution context
-                subprocess.run(["python", "audit_engine.py"], env=env_context, check=True)
-                subprocess.run(["python", "ai_consultant.py"], env=env_context, check=True)
+                # FIXED: Execute using sys.executable to stay within virtual env path boundaries
+                subprocess.run([sys.executable, "audit_engine.py"], env=env_context, check=True)
+                subprocess.run([sys.executable, "ai_consultant.py"], env=env_context, check=True)
                 
                 st.sidebar.success("Analysis cycle completed!")
                 st.rerun()
@@ -128,10 +129,12 @@ if sales_file or purchase_file:
         tab1, tab2 = st.tabs(["Sales Ledger View", "Purchase Ledger View"])
         with tab1:
             if sales_file:
-                st.dataframe(pd.read_excel(sales_file).head(10), use_container_width=True)
+                # UPDATED: Replaced deprecated use_container_width parameter 
+                st.dataframe(pd.read_excel(sales_file).head(10), width="stretch")
         with tab2:
             if purchase_file:
-                st.dataframe(pd.read_excel(purchase_file).head(10), use_container_width=True)
+                # UPDATED: Replaced deprecated use_container_width parameter 
+                st.dataframe(pd.read_excel(purchase_file).head(10), width="stretch")
 
 # --- PDF GENERATOR HELPER ---
 def convert_md_to_pdf(md_text):
@@ -165,12 +168,13 @@ if os.path.exists(report_path):
     with col2:
         pdf_bytes = convert_md_to_pdf(report_content)
         if pdf_bytes:
+            # UPDATED: Replaced deprecated use_container_width parameter 
             st.download_button(
                 label="📥 Export Certified PDF",
                 data=pdf_bytes,
                 file_name="MushakGuard_Audit_Report.pdf",
                 mime="application/pdf",
-                use_container_width=True
+                width="stretch"
             )
             
     st.markdown(report_content)
