@@ -212,8 +212,8 @@ if os.path.exists(report_path):
                 with st.chat_message("assistant"):
                     with st.spinner("Analyzing parameters..."):
                         response = client.chat.completions.create(
-                            model="llama3-8b-8192",
-                            messages=messages,
+                            model="llama-3.3-70b-versatile",  # <--- UPGRADED ACTIVE ID
+                             messages=messages,
                             temperature=0.2
                         )
                         assistant_reply = response.choices[0].message.content
