@@ -35,9 +35,7 @@ ANOMALIES_PATH = os.path.join(DATA_DIR, "detected_anomalies.json")
 REPORT_PATH = os.path.join(DATA_DIR, "NBR_Audit_Report.md")
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 
-# ---------------------------------------------------------------------------
-# Free LLM endpoints (no paid key required, but you do need to register)
-# ---------------------------------------------------------------------------
+# Free LLM endpoints
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.1-8b-instant"
 
@@ -46,9 +44,7 @@ GEMINI_URL = (
     "gemini-1.5-flash:generateContent"
 )
 
-# Local copy used for the fallback report; mirrors audit_engine.py.
 STANDARD_VAT_RATE = 0.15
-
 
 # ---------------------------------------------------------------------------
 # System prompt — tuned for a Bangladeshi VAT auditor / Mushak 9.1
@@ -147,10 +143,6 @@ Rules you must obey:
   any text outside the report.
 """
 
-
-# ---------------------------------------------------------------------------
-# LLM call (Groq → Gemini → local fallback)
-# ---------------------------------------------------------------------------
 def call_groq(api_key: str, user_payload: str) -> str:
     body = {
         "model": GROQ_MODEL,
@@ -171,7 +163,6 @@ def call_groq(api_key: str, user_payload: str) -> str:
     data = resp.json()
     return data["choices"][0]["message"]["content"]
 
-
 def call_gemini(api_key: str, user_payload: str) -> str:
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
@@ -189,14 +180,11 @@ def call_gemini(api_key: str, user_payload: str) -> str:
     data = resp.json()
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
-
-# ---------------------------------------------------------------------------
-# Local fallback (no network / no key)
-# ---------------------------------------------------------------------------
 def local_analysis(anomalies: list[dict], summary: dict) -> str:
-    """Deterministic markdown report built from the JSON alone."""
+    """Deterministic markdown report built safely from the JSON alone."""
     sev = summary.get("counts_by_severity", {})
     by_rule = summary.get("counts_by_rule", {})
+    sources = summary.get("sources", {})
 
     lines: list[str] = []
     lines.append("# NBR Mushak 9.1 Audit Report")
@@ -204,9 +192,7 @@ def local_analysis(anomalies: list[dict], summary: dict) -> str:
     lines.append(f"_Generated locally on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_  ")
     lines.append(f"_Standard VAT rate: **{int(STANDARD_VAT_RATE*100)}%** per the VAT & SD Act, 2012._")
     lines.append("")
-    lines.append("> Note: No LLM API key was configured, so this report was generated "
-                 "locally by `ai_consultant.py`. Set `GROQ_API_KEY` (or `GOOGLE_API_KEY`) "
-                 "in a `.env` file to enable a richer AI-written narrative.")
+    lines.append("> Note: System generated fallback processing matrix active.")
     lines.append("")
 
     # 1. Executive summary
@@ -218,8 +204,8 @@ def local_analysis(anomalies: list[dict], summary: dict) -> str:
     low = sev.get("LOW", 0)
     lines.append(f"- **{total}** anomalies detected in the Mushak 9.1 dataset "
                  f"(HIGH: {high}, MEDIUM: {medium}, LOW: {low}).")
-    lines.append(f"- Sources audited: **{summary['sources']['sales_rows']}** sales rows "
-                 f"and **{summary['sources']['purchase_rows']}** purchase rows.")
+    lines.append(f"- Sources audited: **{sources.get('sales_rows', 0)}** sales rows "
+                 f"and **{sources.get('purchase_rows', 0)}** purchase rows.")
     if high:
         lines.append(f"- **{high} HIGH-severity** issue(s) — these will likely cause the "
                      "Mushak 9.1 return to be rejected or flagged in a desk audit.")
@@ -309,11 +295,11 @@ def local_analysis(anomalies: list[dict], summary: dict) -> str:
         for a in anomalies:
             inv = a.get("invoice_no") or "(no invoice no.)"
             tin = a.get("tin") or "(no TIN)"
-            key = (a["rule"], inv)
+            rule = a.get("rule", "UNKNOWN")
+            key = (rule, inv)
             if key in seen_actions:
                 continue
             seen_actions.add(key)
-            rule = a["rule"]
             if rule == "VAT_RATE_MISMATCH":
                 lines.append(
                     f"{n}. Re-issue invoice **{inv}** with VAT recomputed at the "
@@ -389,10 +375,6 @@ def local_analysis(anomalies: list[dict], summary: dict) -> str:
     lines.append("")
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Pipeline
-# ---------------------------------------------------------------------------
 def build_user_payload(anomalies_doc: dict) -> str:
     """Compact, model-friendly summary of the audit JSON."""
     return (
@@ -401,21 +383,13 @@ def build_user_payload(anomalies_doc: dict) -> str:
         f"```json\n{json.dumps(anomalies_doc, indent=2, ensure_ascii=False)}\n```"
     )
 
-
 def render_report(markdown_body: str, source: str) -> str:
-    """Add a small header to track how the report was generated."""
-    header = (
-        "\n\n"
-    )
-    return header + markdown_body.strip() + "\n"
-
+    return "\n\n" + markdown_body.strip() + "\n"
 
 def main() -> None:
-    # 1. Load environment + JSON
     load_dotenv(ENV_PATH)
     if not os.path.exists(ANOMALIES_PATH):
-        print(f"[!] {ANOMALIES_PATH} not found. Run audit_engine.py first.",
-              file=sys.stderr)
+        print(f"[!] {ANOMALIES_PATH} not found. Run audit_engine.py first.", file=sys.stderr)
         sys.exit(1)
 
     with open(ANOMALIES_PATH, "r", encoding="utf-8") as f:
@@ -424,41 +398,61 @@ def main() -> None:
     anomalies = anomalies_doc.get("anomalies", [])
     payload = build_user_payload(anomalies_doc)
 
-    # 2. Try Groq, then Gemini, then local
     source = "local"
     body: str = ""
-    groq_key = os.getenv("GROQ_API_KEY", "").strip()
-    google_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    
+    # Advanced Environment Variable Lookahead for Streamlit Subprocess context
+    groq_key = os.getenv("GROQ_API_KEY", os.getenv("groq_api_key", "")).strip()
+    google_key = os.getenv("GOOGLE_API_KEY", os.getenv("google_api_key", "")).strip()
+
+    # Fallback to local secrets parsing if environment context dropped during fork
+    secrets_path = os.path.join(BASE_DIR, ".streamlit", "secrets.toml")
+    if not groq_key and os.path.exists(secrets_path):
+        try:
+            with open(secrets_path, "r") as sf:
+                for line in sf:
+                    if "=" in line and "GROQ_API_KEY" in line.upper():
+                        groq_key = line.split("=")[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
 
     if groq_key:
         try:
             print("[*] Calling Groq LLM ...")
             body = call_groq(groq_key, payload)
             source = f"groq:{GROQ_MODEL}"
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"[!] Groq call failed: {e}", file=sys.stderr)
+            
     if not body and google_key:
         try:
             print("[*] Calling Google AI Studio (Gemini) ...")
             body = call_gemini(google_key, payload)
             source = "gemini-1.5-flash"
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"[!] Gemini call failed: {e}", file=sys.stderr)
+            
     if not body:
         print("[*] No LLM reachable — generating local report.")
         body = local_analysis(anomalies, anomalies_doc)
         source = "local-fallback"
 
-    # 3. Defensive: if the model forgot the H1, prepend it
+    # Clean off any system code block fences wrapped around the output markdown
+    if body.strip().startswith("```"):
+        lines = body.strip().split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines[-1].startswith("```"):
+            lines = lines[:-1]
+        body = "\n".join(lines)
+
     if not body.lstrip().lower().startswith("# nbr"):
         body = "# NBR Mushak 9.1 Audit Report\n\n" + body.lstrip()
 
-    # 4. Write report
     final = render_report(body, source)
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(final)
     print(f"[+] Wrote {REPORT_PATH} (source={source}, {len(anomalies)} anomalies)")
-
 
 if __name__ == "__main__":
     main()
