@@ -1,7 +1,8 @@
 streamlit
 pandas
 openpyxl
-requests
-python-dotenv
 markdown
 xhtml2pdf
+groq
+requests
+python-dotenv
