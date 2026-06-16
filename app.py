@@ -8,6 +8,7 @@ import tempfile
 from xhtml2pdf import pisa
 from io import BytesIO
 import json
+from groq import Groq
 
 # --- CORPORATE THEME & PAGE SETUP ---
 st.set_page_config(
@@ -20,34 +21,14 @@ st.set_page_config(
 # Custom Minimalist Corporate CSS Injection
 st.markdown("""
     <style>
-        /* Global Body & Minimal Background adjustments */
         .main { background-color: #fafbfc; }
-        
-        /* Premium Sidebar Customization */
-        section[data-testid="stSidebar"] {
-            background-color: #111827 !important;
-            color: #ffffff;
-        }
-        section[data-testid="stSidebar"] h1, 
-        section[data-testid="stSidebar"] h2, 
-        section[data-testid="stSidebar"] h3, 
-        section[data-testid="stSidebar"] p {
-            color: #f3f4f6 !important;
-        }
-        
-        /* Custom Metric Cards Design */
-        .kpi-card {
-            background-color: #ffffff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            border-left: 4px solid #cccccc;
-            margin-bottom: 10px;
-        }
+        section[data-testid="stSidebar"] { background-color: #111827 !important; color: #ffffff; }
+        section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, 
+        section[data-testid="stSidebar"] h3, section[data-testid="stSidebar"] p { color: #f3f4f6 !important; }
+        .kpi-card { background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border-left: 4px solid #cccccc; margin-bottom: 10px; }
         .kpi-high { border-left-color: #ef4444; }
         .kpi-med { border-left-color: #f59e0b; }
         .kpi-total { border-left-color: #3b82f6; }
-        
         .kpi-val { font-size: 24px; font-weight: bold; color: #111827; margin: 0; }
         .kpi-lbl { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin: 0; }
     </style>
@@ -63,6 +44,11 @@ if "user_data_dir" not in st.session_state:
     st.session_state["user_data_dir"] = tempfile.mkdtemp(prefix="mushakguard_")
 
 USER_DIR = st.session_state["user_data_dir"]
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Initialize chat history state
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
 
 # --- SIDEBAR CONTROL CONTROL PANEL ---
 st.sidebar.markdown("## 📥 Registry Ingestion")
@@ -75,26 +61,40 @@ st.sidebar.markdown("## ⚙️ Processing Core")
 if sales_file and purchase_file:
     if st.sidebar.button("🚀 Execute Audit Analytics"):
         with st.spinner("Crunching data registries against NBR framework..."):
-            try:
-                sales_path = os.path.join(USER_DIR, "sales_register.xlsx")
-                purchase_path = os.path.join(USER_DIR, "purchase_register.xlsx")
-                
-                with open(sales_path, "wb") as f:
-                    f.write(sales_file.getbuffer())
-                with open(purchase_path, "wb") as f:
-                    f.write(purchase_file.getbuffer())
-                
-                env_context = os.environ.copy()
-                env_context["MUSHAK_DATA_DIR"] = USER_DIR
-                
-                # FIXED: Execute using sys.executable to stay within virtual env path boundaries
-                subprocess.run([sys.executable, "audit_engine.py"], env=env_context, check=True)
-                subprocess.run([sys.executable, "ai_consultant.py"], env=env_context, check=True)
-                
-                st.sidebar.success("Analysis cycle completed!")
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Pipeline error: {e}")
+            sales_path = os.path.join(USER_DIR, "sales_register.xlsx")
+            purchase_path = os.path.join(USER_DIR, "purchase_register.xlsx")
+            
+            with open(sales_path, "wb") as f:
+                f.write(sales_file.getbuffer())
+            with open(purchase_path, "wb") as f:
+                f.write(purchase_file.getbuffer())
+            
+            env_context = os.environ.copy()
+            env_context["MUSHAK_DATA_DIR"] = USER_DIR
+            
+            # Step 1: Run Audit Engine
+            res_audit = subprocess.run(
+                [sys.executable, os.path.join(BASE_DIR, "audit_engine.py")], 
+                env=env_context, capture_output=True, text=True
+            )
+            if res_audit.returncode != 0:
+                st.error("❌ audit_engine.py crashed:")
+                st.code(res_audit.stderr, language="bash")
+                st.stop()
+
+            # Step 2: Run AI Consultant
+            res_ai = subprocess.run(
+                [sys.executable, os.path.join(BASE_DIR, "ai_consultant.py")], 
+                env=env_context, capture_output=True, text=True
+            )
+            if res_ai.returncode != 0:
+                st.error("❌ ai_consultant.py crashed. Fix this error to unlock the AI Chat:")
+                st.code(res_ai.stderr, language="bash")
+                st.stop()
+            
+            st.sidebar.success("Analysis cycle completed!")
+            st.session_state["chat_history"] = []  # Reset chat on fresh execution
+            st.rerun()
 else:
     st.sidebar.info("Upload active sales & purchase registries to unlock core audit analytics engine.")
 
@@ -108,7 +108,6 @@ if os.path.exists(anomalies_json_path):
         counts = audit_data.get("counts_by_severity", {})
         total_issues = len(audit_data.get("anomalies", []))
         
-        # Display Row Cards layout dynamically
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             st.markdown(f'<div class="kpi-card kpi-total"><p class="kpi-val">{total_issues}</p><p class="kpi-lbl">Total Anomalies</p></div>', unsafe_allow_html=True)
@@ -129,12 +128,10 @@ if sales_file or purchase_file:
         tab1, tab2 = st.tabs(["Sales Ledger View", "Purchase Ledger View"])
         with tab1:
             if sales_file:
-                # UPDATED: Replaced deprecated use_container_width parameter 
-                st.dataframe(pd.read_excel(sales_file).head(10), width="stretch")
+                st.dataframe(pd.read_excel(sales_file).head(10), use_container_width=True)
         with tab2:
             if purchase_file:
-                # UPDATED: Replaced deprecated use_container_width parameter 
-                st.dataframe(pd.read_excel(purchase_file).head(10), width="stretch")
+                st.dataframe(pd.read_excel(purchase_file).head(10), use_container_width=True)
 
 # --- PDF GENERATOR HELPER ---
 def convert_md_to_pdf(md_text):
@@ -168,15 +165,62 @@ if os.path.exists(report_path):
     with col2:
         pdf_bytes = convert_md_to_pdf(report_content)
         if pdf_bytes:
-            # UPDATED: Replaced deprecated use_container_width parameter 
             st.download_button(
                 label="📥 Export Certified PDF",
                 data=pdf_bytes,
                 file_name="MushakGuard_Audit_Report.pdf",
                 mime="application/pdf",
-                width="stretch"
+                use_container_width=True
             )
             
     st.markdown(report_content)
+    
+    # --- INTERACTIVE NATIVE AI CHAT MODULE ---
+    st.write("---")
+    st.markdown("#### 💬 Interactive Compliance Consultant")
+    st.caption("Ask specific contextual clarification questions regarding the detected anomalies and NBR audit exposures.")
+    
+    for message in st.session_state["chat_history"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            
+    if user_query := st.chat_input("Ask about tax discrepancies, matching exemptions, or code errors..."):
+        with st.chat_message("user"):
+            st.markdown(user_query)
+        st.session_state["chat_history"].append({"role": "user", "content": user_query})
+        
+        try:
+            api_key = st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
+            if not api_key:
+                st.error("Groq API Key is missing. Please add GROQ_API_KEY inside Streamlit Advanced Settings.")
+            else:
+                client = Groq(api_key=api_key)
+                messages = [
+                    {
+                        "role": "system", 
+                        "content": (
+                            "You are the MushakGuard AI Compliance Consultant. Your task is to answer "
+                            "user questions strictly based on the following pre-compiled NBR Tax Audit Report:\n\n"
+                            f"{report_content}\n\n"
+                            "Provide concise, precise, professional, and corporate answers citing explicit parts of the report."
+                        )
+                    }
+                ]
+                for hist in st.session_state["chat_history"]:
+                    messages.append({"role": hist["role"], "content": hist["content"]})
+                    
+                with st.chat_message("assistant"):
+                    with st.spinner("Analyzing parameters..."):
+                        response = client.chat.completions.create(
+                            model="llama3-8b-8192",
+                            messages=messages,
+                            temperature=0.2
+                        )
+                        assistant_reply = response.choices[0].message.content
+                        st.markdown(assistant_reply)
+                        
+                st.session_state["chat_history"].append({"role": "assistant", "content": assistant_reply})
+        except Exception as chat_err:
+            st.error(f"AI Consultant Error: {chat_err}")
 else:
     st.info("No compliance reports compiled in the current system session. Use the ingestion module to start.")
