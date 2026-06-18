@@ -1,0 +1,130 @@
+{
+  "$schema": "https://mushak.bd/schemas/rules.schema.json",
+  "version": "1.0.0",
+  "effective_date": "2026-06-18",
+  "legal_frameworks": {
+    "act": "Value Added Tax and Supplementary Duty Act, 2012",
+    "rules": "VAT & SD Rules, 2016"
+  },
+  "constants": {
+    "STANDARD_VAT_RATE": 0.15,
+    "TIN_LENGTH": 12,
+    "VAT_TOLERANCE": 0.01,
+    "TOTAL_TOLERANCE": 0.01,
+    "FILING_DEADLINE_DAY": 15,
+    "FILING_FREQUENCY": "monthly"
+  },
+  "fields": [
+    "invoice_no",
+    "invoice_date",
+    "supplier_name",
+    "supplier_tin",
+    "buyer_name",
+    "buyer_tin",
+    "value_excl_vat",
+    "vat",
+    "total",
+    "remarks"
+  ],
+  "rules": [
+    {
+      "code": "TIN_MISSING",
+      "severity": "HIGH",
+      "field": "tin",
+      "applies_to": ["supplier_tin", "buyer_tin"],
+      "check": "field_is_empty",
+      "legal_reference": "Value Added Tax and Supplementary Duty Act, 2012 - input tax credit admissible only against a registered person with a valid TIN",
+      "default_suggestion": "Collect a valid 12-digit TIN from the counter-party before claiming any related input VAT on Mushak 9.1."
+    },
+    {
+      "code": "TIN_FORMAT_INVALID",
+      "severity": "MEDIUM",
+      "field": "tin",
+      "applies_to": ["supplier_tin", "buyer_tin"],
+      "check": "field_is_not_12_digits_numeric",
+      "legal_reference": "NBR TIN registration rules - TIN must be exactly 12 numeric digits",
+      "default_suggestion": "Correct the TIN to a 12-digit numeric value; verify against NBR's TIN database."
+    },
+    {
+      "code": "VAT_RATE_MISMATCH",
+      "severity": "HIGH",
+      "field": "vat",
+      "check": "vat != round(value_excl_vat * STANDARD_VAT_RATE, 2) (within tolerance)",
+      "legal_reference": "Value Added Tax and Supplementary Duty Act, 2012 - standard VAT rate is 15%",
+      "default_suggestion": "Re-issue the invoice with VAT recomputed at the standard 15% rate, update Mushak 6.6, and re-submit Mushak 9.1 for the period."
+    },
+    {
+      "code": "TOTAL_MISMATCH",
+      "severity": "MEDIUM",
+      "field": "total",
+      "check": "total != round(value_excl_vat + vat, 2) (within tolerance)",
+      "legal_reference": "Value Added Tax and Supplementary Duty Act, 2012 - declared total must reconcile with line components",
+      "default_suggestion": "Reconcile the invoice total so it equals value_excl_vat + VAT, then re-submit Mushak 9.1."
+    },
+    {
+      "code": "NEGATIVE_BASE_VALUE",
+      "severity": "HIGH",
+      "field": "value_excl_vat",
+      "check": "value_excl_vat < 0",
+      "legal_reference": "VAT & SD Rules, 2016 - returns/refunds must be processed as distinct credit notes (Mushak 6.2)",
+      "default_suggestion": "Reverse the negative line and process the return as a Mushak 6.2 credit note reflected in Mushak 6.6 and Mushak 9.1."
+    },
+    {
+      "code": "NEGATIVE_VAT",
+      "severity": "HIGH",
+      "field": "vat",
+      "check": "vat < 0",
+      "legal_reference": "VAT & SD Rules, 2016 - VAT credit notes must follow the prescribed credit-note procedure",
+      "default_suggestion": "Reverse the negative VAT line and process it via a Mushak 6.2 credit note in Mushak 9.1."
+    },
+    {
+      "code": "NEGATIVE_TOTAL",
+      "severity": "HIGH",
+      "field": "total",
+      "check": "total < 0",
+      "legal_reference": "VAT & SD Rules, 2016 - sales returns require a separate credit note, not a negative invoice",
+      "default_suggestion": "Reverse the negative invoice total and record the sales return as a Mushak 6.2 credit note in Mushak 6.6 and Mushak 9.1."
+    },
+    {
+      "code": "DUPLICATE_INVOICE",
+      "severity": "HIGH",
+      "field": "invoice_no",
+      "scope": "within_sheet",
+      "check": "invoice_no appears more than once in the same register",
+      "legal_reference": "VAT & SD Rules, 2016 - each Mushak 9.1 line must have a unique invoice reference",
+      "default_suggestion": "Renumber the duplicate invoice so each line in the register is unique, then re-submit Mushak 9.1."
+    },
+    {
+      "code": "CROSS_SHEET_INVOICE_COLLISION",
+      "severity": "HIGH",
+      "field": "invoice_no",
+      "scope": "across_sheets",
+      "check": "invoice_no appears in both sales and purchase registers",
+      "legal_reference": "Value Added Tax and Supplementary Duty Act, 2012, section 46 - circular or recycled invoices may lead to disallowance of input tax credit",
+      "default_suggestion": "Investigate the invoice appearing in both registers; if it is recycled, remove it from the offending register and file the correct transaction in Mushak 9.1."
+    },
+    {
+      "code": "MISSING_CHALLAN_REF",
+      "severity": "HIGH",
+      "field": "challan_no",
+      "applies_to": ["mushak_6_3_no"],
+      "check": "purchase row with positive base value but empty Mushak 6.3 reference",
+      "legal_reference": "Value Added Tax and Supplementary Duty Act, 2012, section 46 - input VAT rebate is inadmissible without the corresponding Mushak 6.3 Tax Challan reference",
+      "default_suggestion": "Collect the Mushak 6.3 Tax Challan reference for the purchase before claiming related input VAT on Mushak 9.1."
+    },
+    {
+      "code": "LATE_FILING_RISK",
+      "severity": "MEDIUM",
+      "field": "filing_date",
+      "check": "filing_date is later than the 15th of the month immediately following invoice_date",
+      "legal_reference": "VAT & SD Rules, 2016, Rule 25 - Mushak 9.1 must be filed monthly by the 15th of the following month",
+      "default_suggestion": "Resubmit Mushak 9.1 within the statutory window so that invoices of the relevant month are filed by the 15th of the next month, avoiding standard statutory penalties."
+    }
+  ],
+  "filing_notes": {
+    "deadline": "Mushak 9.1 must be filed monthly by the 15th of the following month under the VAT & SD Rules, 2016.",
+    "input_vat": "Input VAT on Mushak 9.1 is admissible only against a valid Mushak 6.1 Tax Invoice from a registered person with a verified 12-digit TIN, and must reconcile with the supporting Mushak 6.6 Purchase & Sales Statement.",
+    "treasury_reconciliation": "The tax payable declared in Mushak 9.1 must equal the VAT actually deposited via valid Mushak 6.3 challans.",
+    "audit_risk": "Mismatches may trigger a desk audit under section 53 of the Value Added Tax and Supplementary Duty Act, 2012, and disallowance of input tax credit under section 46 of the same Act."
+  }
+}
