@@ -9,7 +9,7 @@ from xhtml2pdf import pisa
 from io import BytesIO
 import json
 from groq import Groq
-
+from anthropic import Anthropic
 # --- CORPORATE THEME & PAGE SETUP ---
 st.set_page_config(
     page_title="MushakGuard Enterprise Agent", 
@@ -189,34 +189,38 @@ if os.path.exists(report_path):
             st.markdown(user_query)
         st.session_state["chat_history"].append({"role": "user", "content": user_query})
         
+     # Connect to Claude Opus to generate the response
         try:
-            api_key = st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
+            api_key = st.secrets.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
             if not api_key:
-                st.error("Groq API Key is missing. Please add GROQ_API_KEY inside Streamlit Advanced Settings.")
+                st.error("Anthropic API Key is missing. Please add ANTHROPIC_API_KEY to Streamlit Secrets.")
             else:
-                client = Groq(api_key=api_key)
-                messages = [
-                    {
-                        "role": "system", 
-                        "content": (
-                            "You are the MushakGuard AI Compliance Consultant. Your task is to answer "
-                            "user questions strictly based on the following pre-compiled NBR Tax Audit Report:\n\n"
-                            f"{report_content}\n\n"
-                            "Provide concise, precise, professional, and corporate answers citing explicit parts of the report."
-                        )
-                    }
-                ]
+                client = Anthropic(api_key=api_key)
+                
+                # Anthropic handles System Prompts separately from the message array
+                system_prompt = (
+                    "You are the MushakGuard AI Compliance Consultant. Your task is to answer "
+                    "user questions strictly based on the following pre-compiled NBR Tax Audit Report:\n\n"
+                    f"{report_content}\n\n"
+                    "Provide concise, precise, professional, and corporate answers citing explicit parts of the report."
+                )
+                
+                # Format the conversation history strictly for Anthropic
+                anthropic_messages = []
                 for hist in st.session_state["chat_history"]:
-                    messages.append({"role": hist["role"], "content": hist["content"]})
+                    if hist["role"] in ["user", "assistant"]:
+                        anthropic_messages.append({"role": hist["role"], "content": hist["content"]})
                     
                 with st.chat_message("assistant"):
-                    with st.spinner("Analyzing parameters..."):
-                        response = client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",  # <--- UPGRADED ACTIVE ID
-                             messages=messages,
+                    with st.spinner("Claude Opus is analyzing parameters..."):
+                        response = client.messages.create(
+                            model="claude-3-opus-20240229", # Official Claude 3 Opus model ID
+                            max_tokens=1024,
+                            system=system_prompt,
+                            messages=anthropic_messages,
                             temperature=0.2
                         )
-                        assistant_reply = response.choices[0].message.content
+                        assistant_reply = response.content[0].text
                         st.markdown(assistant_reply)
                         
                 st.session_state["chat_history"].append({"role": "assistant", "content": assistant_reply})
